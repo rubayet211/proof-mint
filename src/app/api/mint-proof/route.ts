@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { proofSchema } from "@/lib/validation/proof.schema";
-import { getIdempotencyKey } from "@/lib/idempotency";
 import { proofStateStore } from "@/lib/proof-state";
 import { mintProofRateLimiter } from "@/lib/rate-limit";
 import { verifyOrRequestX402Payment } from "@/lib/x402/server";
 import { submitProofMessage } from "@/lib/hedera/hcs-service";
 import { mintProofToken } from "@/lib/hedera/token-service";
-import { createProofDigest } from "@/lib/proof";
+import { createProofDigest, getProofStateKey } from "@/lib/proof";
 import { 
   getTransactionUrl, 
   getAccountUrl, 
@@ -30,9 +29,9 @@ export async function POST(req: NextRequest) {
     const proofDigest = createProofDigest(data);
 
     // 2. Idempotency and rate-limit checks
-    const idempotencyKey = getIdempotencyKey(data.payerAccountId, data.title, data.clientRequestId);
+    const proofStateKey = getProofStateKey(data.payerAccountId, data.title, data.clientRequestId);
     
-    const existing = await proofStateStore.getCompletedResult(idempotencyKey, proofDigest);
+    const existing = await proofStateStore.getCompletedResult(proofStateKey, proofDigest);
     if (existing) {
       return NextResponse.json(existing);
     }
@@ -54,7 +53,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const canProceed = await proofStateStore.markInProgress(idempotencyKey, proofDigest);
+    const canProceed = await proofStateStore.markInProgress(proofStateKey, proofDigest);
     if (!canProceed) {
       return NextResponse.json(
         { success: false, error: "Conflict", message: "A request for this proof is already in progress." },
@@ -66,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     try {
       // 3. x402 Payment Check and Verification
-      settledPayment = await proofStateStore.getRecoverablePayment(idempotencyKey, proofDigest);
+      settledPayment = await proofStateStore.getRecoverablePayment(proofStateKey, proofDigest);
 
       if (!settledPayment) {
         const paymentCheck = await verifyOrRequestX402Payment(req, {
@@ -75,12 +74,12 @@ export async function POST(req: NextRequest) {
         });
 
         if (paymentCheck.requiresPaymentResponse) {
-          await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+          await proofStateStore.clearInProgress(proofStateKey, proofDigest);
           return paymentCheck.requiresPaymentResponse;
         }
 
         if (!paymentCheck.success || !paymentCheck.payment) {
-          await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+          await proofStateStore.clearInProgress(proofStateKey, proofDigest);
           return NextResponse.json(
             {
               success: false,
@@ -92,11 +91,11 @@ export async function POST(req: NextRequest) {
         }
 
         settledPayment = paymentCheck.payment;
-        await proofStateStore.savePaymentSettled(idempotencyKey, proofDigest, settledPayment);
+        await proofStateStore.savePaymentSettled(proofStateKey, proofDigest, settledPayment);
       }
 
       // 4. Payment verified! Prepare or recover the exact ProofRecord used for HCS.
-      const proof: ProofRecord = await proofStateStore.getRecoverableProof(idempotencyKey, proofDigest)
+      const proof: ProofRecord = await proofStateStore.getRecoverableProof(proofStateKey, proofDigest)
         || {
           proofId: `proof_${crypto.randomUUID()}`,
           title: data.title,
@@ -112,13 +111,13 @@ export async function POST(req: NextRequest) {
           network: "testnet",
           schemaVersion: "1.0"
         };
-      await proofStateStore.saveProofPrepared(idempotencyKey, proofDigest, proof);
+      await proofStateStore.saveProofPrepared(proofStateKey, proofDigest, proof);
 
       // 5. Hedera Agent Kit Execution (HCS + HTS)
       // Since these are on-chain, they could fail. We'll do HCS first as primary.
-      const hcsResult = await proofStateStore.getRecoverableHcs(idempotencyKey, proofDigest)
+      const hcsResult = await proofStateStore.getRecoverableHcs(proofStateKey, proofDigest)
         || await submitProofMessage(proof);
-      await proofStateStore.saveHcsSubmitted(idempotencyKey, proofDigest, hcsResult);
+      await proofStateStore.saveHcsSubmitted(proofStateKey, proofDigest, hcsResult);
       const htsResult = await mintProofToken(proof);
 
       // 6. Assemble Response
@@ -142,7 +141,7 @@ export async function POST(req: NextRequest) {
       };
 
       // 7. Save and Return
-      await proofStateStore.saveCompletedResult(idempotencyKey, proofDigest, response);
+      await proofStateStore.saveCompletedResult(proofStateKey, proofDigest, response);
       const res = NextResponse.json(response);
       if (settledPayment.transactionId) {
         res.headers.set("PAYMENT-RESPONSE", Buffer.from(JSON.stringify({
@@ -158,12 +157,12 @@ export async function POST(req: NextRequest) {
     } catch (innerError: unknown) {
       if (settledPayment) {
         await proofStateStore.saveExecutionFailure(
-          idempotencyKey,
+          proofStateKey,
           proofDigest,
           innerError instanceof Error ? innerError.message : "Proof execution failed."
         );
       } else {
-        await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+        await proofStateStore.clearInProgress(proofStateKey, proofDigest);
       }
       throw innerError;
     }

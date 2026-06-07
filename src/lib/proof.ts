@@ -18,3 +18,12 @@ export function createProofDigest(data: ProofSchemaInput): string {
     .update(JSON.stringify(canonicalProofInput(data)))
     .digest("hex");
 }
+
+export function getProofStateKey(payerAccountId: string, title: string, clientRequestId?: string): string {
+  if (clientRequestId) {
+    return `proof_${payerAccountId}_${clientRequestId}`;
+  }
+
+  const normalizedTitle = title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `proof_${payerAccountId}_${normalizedTitle}`;
+}

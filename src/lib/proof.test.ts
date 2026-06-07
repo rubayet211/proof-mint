@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { canonicalProofInput, createProofDigest } from "./proof";
+import { canonicalProofInput, createProofDigest, getProofStateKey } from "./proof";
 import { ProofSchemaInput } from "./validation/proof.schema";
 
 const proof: ProofSchemaInput = {
@@ -27,6 +27,18 @@ describe("proof digest", () => {
         ...proof,
         title: "Different Achievement",
       })
+    );
+  });
+
+  it("builds a stable state key from client request id", () => {
+    expect(getProofStateKey("0.0.12345", " AI Hackathon ProofMint Demo ", "request-1")).toBe(
+      "proof_0.0.12345_request-1"
+    );
+  });
+
+  it("falls back to normalized title when no client request id exists", () => {
+    expect(getProofStateKey("0.0.12345", " AI Hackathon ProofMint Demo ")).toBe(
+      "proof_0.0.12345_ai-hackathon-proofmint-demo"
     );
   });
 });
