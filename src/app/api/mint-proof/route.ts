@@ -1,12 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { proofSchema } from "@/lib/validation/proof.schema";
-import { 
-  getIdempotencyKey, 
-  getExistingResult, 
-  saveCompletedResult, 
-  markInProgress, 
-  clearInProgress 
-} from "@/lib/idempotency";
+import { getIdempotencyKey } from "@/lib/idempotency";
+import { proofStateStore } from "@/lib/proof-state";
+import { mintProofRateLimiter } from "@/lib/rate-limit";
 import { verifyOrRequestX402Payment } from "@/lib/x402/server";
 import { submitProofMessage } from "@/lib/hedera/hcs-service";
 import { mintProofToken } from "@/lib/hedera/token-service";
@@ -16,7 +12,7 @@ import {
   getAccountUrl, 
   getTokenUrl
 } from "@/lib/hedera/hashscan";
-import { ProofRecord, MintProofResponse } from "@/types";
+import { ProofRecord, MintProofResponse, PaymentResult } from "@/types";
 
 export async function POST(req: NextRequest) {
   try {
@@ -31,16 +27,34 @@ export async function POST(req: NextRequest) {
       );
     }
     const data = parsed.data;
+    const proofDigest = createProofDigest(data);
 
-    // 2. Idempotency Check
+    // 2. Idempotency and rate-limit checks
     const idempotencyKey = getIdempotencyKey(data.payerAccountId, data.title, data.clientRequestId);
     
-    const existing = await getExistingResult(idempotencyKey);
+    const existing = await proofStateStore.getCompletedResult(idempotencyKey, proofDigest);
     if (existing) {
       return NextResponse.json(existing);
     }
 
-    const canProceed = await markInProgress(idempotencyKey);
+    const rateLimit = mintProofRateLimiter.check(`${getClientIp(req)}:${data.payerAccountId}`);
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Rate Limit Exceeded",
+          message: "Too many proof mint attempts. Please retry shortly.",
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(rateLimit.retryAfterSeconds || 60),
+          },
+        }
+      );
+    }
+
+    const canProceed = await proofStateStore.markInProgress(idempotencyKey, proofDigest);
     if (!canProceed) {
       return NextResponse.json(
         { success: false, error: "Conflict", message: "A request for this proof is already in progress." },
@@ -48,29 +62,37 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let settledPayment: PaymentResult | null = null;
+
     try {
       // 3. x402 Payment Check and Verification
-      const proofDigest = createProofDigest(data);
-      const paymentCheck = await verifyOrRequestX402Payment(req, {
-        resource: "/api/mint-proof",
-        proofDigest,
-      });
+      settledPayment = await proofStateStore.getRecoverablePayment(idempotencyKey, proofDigest);
 
-      if (paymentCheck.requiresPaymentResponse) {
-        await clearInProgress(idempotencyKey);
-        return paymentCheck.requiresPaymentResponse;
-      }
+      if (!settledPayment) {
+        const paymentCheck = await verifyOrRequestX402Payment(req, {
+          resource: "/api/mint-proof",
+          proofDigest,
+        });
 
-      if (!paymentCheck.success || !paymentCheck.payment) {
-        await clearInProgress(idempotencyKey);
-        return NextResponse.json(
-          {
-            success: false,
-            error: paymentCheck.paymentError?.error || "Payment Verification Failed",
-            message: paymentCheck.paymentError?.message || "The provided x402 payment could not be verified.",
-          },
-          { status: 402 }
-        );
+        if (paymentCheck.requiresPaymentResponse) {
+          await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+          return paymentCheck.requiresPaymentResponse;
+        }
+
+        if (!paymentCheck.success || !paymentCheck.payment) {
+          await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+          return NextResponse.json(
+            {
+              success: false,
+              error: paymentCheck.paymentError?.error || "Payment Verification Failed",
+              message: paymentCheck.paymentError?.message || "The provided x402 payment could not be verified.",
+            },
+            { status: 402 }
+          );
+        }
+
+        settledPayment = paymentCheck.payment;
+        await proofStateStore.savePaymentSettled(idempotencyKey, proofDigest, settledPayment);
       }
 
       // 4. Payment verified! Prepare ProofRecord
@@ -83,7 +105,7 @@ export async function POST(req: NextRequest) {
         recipientAccountId: data.recipientAccountId || data.payerAccountId,
         issuerName: data.issuerName || "ProofMint Agent",
         createdAt: new Date().toISOString(),
-        paymentReference: paymentCheck.payment.transactionId,
+        paymentReference: settledPayment.transactionId,
         proofDigest,
         app: "ProofMint Hedera",
         network: "testnet",
@@ -92,14 +114,16 @@ export async function POST(req: NextRequest) {
 
       // 5. Hedera Agent Kit Execution (HCS + HTS)
       // Since these are on-chain, they could fail. We'll do HCS first as primary.
-      const hcsResult = await submitProofMessage(proof);
+      const hcsResult = await proofStateStore.getRecoverableHcs(idempotencyKey, proofDigest)
+        || await submitProofMessage(proof);
+      await proofStateStore.saveHcsSubmitted(idempotencyKey, proofDigest, hcsResult);
       const htsResult = await mintProofToken(proof);
 
       // 6. Assemble Response
       const response: MintProofResponse = {
         success: true,
         proof,
-        payment: paymentCheck.payment,
+        payment: settledPayment,
         hedera: {
           hcsTopicId: hcsResult.hcsTopicId,
           hcsTransactionId: hcsResult.hcsTransactionId,
@@ -110,28 +134,35 @@ export async function POST(req: NextRequest) {
         links: {
           hcsTransaction: getTransactionUrl(hcsResult.hcsTransactionId),
           token: htsResult.tokenId ? getTokenUrl(htsResult.tokenId) : undefined,
-          paymentTransaction: paymentCheck.payment.transactionId ? getTransactionUrl(paymentCheck.payment.transactionId) : undefined,
+          paymentTransaction: settledPayment.transactionId ? getTransactionUrl(settledPayment.transactionId) : undefined,
           account: getAccountUrl(proof.recipientAccountId)
         }
       };
 
       // 7. Save and Return
-      await saveCompletedResult(idempotencyKey, response);
+      await proofStateStore.saveCompletedResult(idempotencyKey, proofDigest, response);
       const res = NextResponse.json(response);
-      if (paymentCheck.payment.transactionId) {
+      if (settledPayment.transactionId) {
         res.headers.set("PAYMENT-RESPONSE", Buffer.from(JSON.stringify({
           success: true,
-          transaction: paymentCheck.payment.transactionId,
-          network: paymentCheck.payment.network,
-          payer: paymentCheck.payment.payer,
-          amount: paymentCheck.payment.amount,
+          transaction: settledPayment.transactionId,
+          network: settledPayment.network,
+          payer: settledPayment.payer,
+          amount: settledPayment.amount,
         })).toString("base64"));
       }
       return res;
 
     } catch (innerError: unknown) {
-      // In case of execution failure, clean up in-progress state so user can retry
-      await clearInProgress(idempotencyKey);
+      if (settledPayment) {
+        await proofStateStore.saveExecutionFailure(
+          idempotencyKey,
+          proofDigest,
+          innerError instanceof Error ? innerError.message : "Proof execution failed."
+        );
+      } else {
+        await proofStateStore.clearInProgress(idempotencyKey, proofDigest);
+      }
       throw innerError;
     }
 
@@ -142,4 +173,10 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+function getClientIp(req: NextRequest): string {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || req.headers.get("x-real-ip")
+    || "local";
 }

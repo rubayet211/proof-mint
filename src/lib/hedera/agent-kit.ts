@@ -4,6 +4,7 @@ import {
   coreConsensusPlugin, 
   coreTokenPlugin 
 } from "@hashgraph/hedera-agent-kit/plugins";
+import { requireHederaTestnet } from "./network";
 
 let clientInstance: Client | null = null;
 let agentInstance: HederaAgentAPI | null = null;
@@ -11,16 +12,12 @@ let agentInstance: HederaAgentAPI | null = null;
 export function getHederaClient(): Client {
   if (clientInstance) return clientInstance;
 
-  const network = process.env.HEDERA_NETWORK || "testnet";
+  requireHederaTestnet(process.env.HEDERA_NETWORK);
   const accountId = process.env.HEDERA_OPERATOR_ACCOUNT_ID;
   const privateKey = process.env.HEDERA_OPERATOR_PRIVATE_KEY;
 
   if (!accountId || !privateKey) {
     throw new Error("Missing Hedera operator credentials in environment variables.");
-  }
-
-  if (network !== "testnet") {
-    throw new Error("ProofMint MVP is locked to Hedera testnet.");
   }
 
   const client = Client.forTestnet();

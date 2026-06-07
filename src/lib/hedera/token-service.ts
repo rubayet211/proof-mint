@@ -5,9 +5,7 @@ export async function mintProofToken(proof: ProofRecord): Promise<{ tokenId?: st
   const tokenId = process.env.HEDERA_PROOF_TOKEN_ID;
 
   if (!tokenId) {
-    // If no token ID is configured, we fallback gracefully rather than fail the whole mint process.
-    console.warn("HEDERA_PROOF_TOKEN_ID is not set. Skipping HTS token minting.");
-    return {};
+    throw new Error("Missing HEDERA_PROOF_TOKEN_ID in environment variables.");
   }
 
   try {
@@ -30,7 +28,6 @@ export async function mintProofToken(proof: ProofRecord): Promise<{ tokenId?: st
     };
   } catch (error) {
     console.error("HTS Error:", error);
-    // Don't throw, return empty so the user still gets their HCS proof
-    return {};
+    throw error;
   }
 }

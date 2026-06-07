@@ -66,7 +66,7 @@ function HomeContent() {
                 <CardHeader>
                   <CardTitle>Mint Your Achievement</CardTitle>
                   <CardDescription>
-                    Fill out the details below. A 0.25 USDC payment is required to execute the agent.
+                    Fill out the details below. A Hedera testnet x402 payment is required to execute the agent.
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-6">
@@ -112,7 +112,7 @@ function HomeContent() {
                     </div>
                     <div>
                       <h4 className="font-medium text-sm">1. x402 Payment</h4>
-                      <p className="text-xs text-muted-foreground mt-1">Approve a small payment via your wallet. Verified safely on the server by Blocky402.</p>
+                      <p className="text-xs text-muted-foreground mt-1">Approve a small payment via your wallet. The server verifies and settles the x402 Hedera payment.</p>
                     </div>
                   </div>
                   <div className="flex gap-3">
@@ -130,7 +130,7 @@ function HomeContent() {
                     </div>
                     <div>
                       <h4 className="font-medium text-sm">3. HTS Token Minted</h4>
-                      <p className="text-xs text-muted-foreground mt-1">You receive an on-chain token representing your verifiable achievement.</p>
+                      <p className="text-xs text-muted-foreground mt-1">A configured proof token is minted as your on-chain achievement receipt.</p>
                     </div>
                   </div>
                 </CardContent>

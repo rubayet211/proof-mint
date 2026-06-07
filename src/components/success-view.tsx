@@ -6,9 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, ExternalLink, Copy, Share2 } from "lucide-react";
 import { toast } from "sonner";
+import { getVisibleProofLinks } from "@/lib/proof-links";
 
 export function SuccessView({ response, onReset }: { response: MintProofResponse, onReset: () => void }) {
   const { proof, hedera, links } = response;
+  const visibleLinks = getVisibleProofLinks(response);
 
   const copyToClipboard = (text: string, description: string) => {
     navigator.clipboard.writeText(text);
@@ -67,37 +69,23 @@ export function SuccessView({ response, onReset }: { response: MintProofResponse
           </div>
         </CardContent>
         <CardFooter className="flex flex-col gap-3 bg-card/50 border-t p-4 rounded-b-xl">
-          {links?.hcsTransaction && (
-            <div className="flex items-center justify-between w-full">
-              <span className="text-sm font-medium">HCS Record</span>
+          {visibleLinks.map((link) => (
+            <div key={link.label} className="flex items-center justify-between w-full gap-3">
+              <span className="text-sm font-medium">{link.label}</span>
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => copyToClipboard(hedera?.hcsTransactionId || "", "HCS Tx ID")}>
+                {link.copyValue && (
+                <Button variant="outline" size="sm" onClick={() => copyToClipboard(link.copyValue || "", link.label)}>
                   <Copy className="h-3 w-3 mr-1" /> Copy ID
                 </Button>
-                <a href={links.hcsTransaction} target="_blank" rel="noopener noreferrer">
+                )}
+                <a href={link.url} target="_blank" rel="noopener noreferrer">
                   <Button variant="default" size="sm">
                     HashScan <ExternalLink className="h-3 w-3 ml-1" />
                   </Button>
                 </a>
               </div>
             </div>
-          )}
-          
-          {links?.token && (
-            <div className="flex items-center justify-between w-full">
-              <span className="text-sm font-medium">HTS Token</span>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => copyToClipboard(hedera?.tokenId || "", "Token ID")}>
-                  <Copy className="h-3 w-3 mr-1" /> Copy ID
-                </Button>
-                <a href={links.token} target="_blank" rel="noopener noreferrer">
-                  <Button variant="default" size="sm">
-                    HashScan <ExternalLink className="h-3 w-3 ml-1" />
-                  </Button>
-                </a>
-              </div>
-            </div>
-          )}
+          ))}
         </CardFooter>
       </Card>
 

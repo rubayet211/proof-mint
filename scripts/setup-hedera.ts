@@ -1,17 +1,18 @@
 import { Client, PrivateKey, TopicCreateTransaction, TokenCreateTransaction, TokenType, TokenSupplyType } from "@hiero-ledger/sdk";
 import "dotenv/config";
+import { requireHederaTestnet } from "../src/lib/hedera/network";
 
 async function main() {
   const accountId = process.env.HEDERA_OPERATOR_ACCOUNT_ID;
   const privateKey = process.env.HEDERA_OPERATOR_PRIVATE_KEY;
-  const network = process.env.HEDERA_NETWORK || "testnet";
+  const network = requireHederaTestnet(process.env.HEDERA_NETWORK);
 
   if (!accountId || !privateKey) {
     console.error("Missing HEDERA_OPERATOR_ACCOUNT_ID or HEDERA_OPERATOR_PRIVATE_KEY in .env");
     process.exit(1);
   }
 
-  const client = network === "mainnet" ? Client.forMainnet() : Client.forTestnet();
+  const client = Client.forTestnet();
   const operatorKey = PrivateKey.fromStringECDSA(privateKey);
   client.setOperator(accountId, operatorKey);
 

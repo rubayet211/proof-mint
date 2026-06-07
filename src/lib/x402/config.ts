@@ -1,5 +1,4 @@
 export const x402Config = {
-  facilitatorUrl: process.env.X402_FACILITATOR_URL || "https://api.testnet.blocky402.com",
   paymentAsset: process.env.X402_PAYMENT_ASSET || "USDC",
   priceAmount: process.env.X402_PRICE_AMOUNT || "0.25",
   payToAccountId: process.env.X402_PAY_TO_ACCOUNT_ID || "",

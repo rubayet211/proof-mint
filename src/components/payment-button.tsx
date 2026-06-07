@@ -8,6 +8,7 @@ import { ProofSchemaInput } from "@/lib/validation/proof.schema";
 import { MintProofResponse } from "@/types";
 import { useWallet } from "@/hooks/use-wallet";
 import { createWalletPaymentHeaders } from "@/lib/x402/client";
+import { getPaymentStepLabel, paymentStepLabels, type PaymentStep } from "@/lib/payment-progress";
 
 interface PaymentButtonProps {
   data: ProofSchemaInput | null;
@@ -17,6 +18,7 @@ interface PaymentButtonProps {
 
 export function PaymentButton({ data, onSuccess }: PaymentButtonProps) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [currentStep, setCurrentStep] = useState<PaymentStep | null>(null);
   const { signer, accountId } = useWallet();
 
   const handlePaymentAndMint = async () => {
@@ -27,6 +29,7 @@ export function PaymentButton({ data, onSuccess }: PaymentButtonProps) {
     }
 
     setIsProcessing(true);
+    setCurrentStep("requestingPayment");
 
     try {
       const initialReq = await fetch("/api/mint-proof", {
@@ -50,9 +53,11 @@ export function PaymentButton({ data, onSuccess }: PaymentButtonProps) {
       const displayAsset = requirement?.extra?.displayAsset || "USDC";
 
       toast.info(`Approve ${displayAmount} ${displayAsset} in your wallet.`);
+      setCurrentStep("signingPayment");
       const paymentHeaders = await createWalletPaymentHeaders(paymentRequired, signer, accountId);
 
-      toast.success("Payment signed. Settling and executing Hedera Agent Kit actions...");
+      toast.success("Payment signed. Verifying and executing Hedera Agent Kit actions...");
+      setCurrentStep("verifyingPayment");
 
       const finalReq = await fetch("/api/mint-proof", {
         method: "POST",
@@ -66,6 +71,7 @@ export function PaymentButton({ data, onSuccess }: PaymentButtonProps) {
       const finalData: MintProofResponse = await finalReq.json();
 
       if (finalReq.ok && finalData.success) {
+        setCurrentStep(finalData.hedera?.tokenId ? "generatingProof" : "recordingProof");
         onSuccess(finalData);
       } else {
         throw new Error(finalData.message || finalData.error || "Payment settled but proof execution failed.");
@@ -75,28 +81,44 @@ export function PaymentButton({ data, onSuccess }: PaymentButtonProps) {
       toast.error(error instanceof Error ? error.message : "An unexpected error occurred");
     } finally {
       setIsProcessing(false);
+      setCurrentStep(null);
     }
   };
 
   if (!data) return null;
 
   return (
-    <Button
-      onClick={handlePaymentAndMint}
-      disabled={isProcessing}
-      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-6"
-    >
-      {isProcessing ? (
-        <>
-          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-          Paying, settling, and minting...
-        </>
-      ) : (
-        <>
-          <CreditCard className="mr-2 h-5 w-5" />
-          Pay 0.25 USDC & Mint Proof
-        </>
+    <div className="space-y-3">
+      <Button
+        onClick={handlePaymentAndMint}
+        disabled={isProcessing}
+        className="w-full bg-primary hover:bg-primary/90 text-primary-foreground font-medium py-6"
+      >
+        {isProcessing ? (
+          <>
+            <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+            {getPaymentStepLabel(currentStep)}
+          </>
+        ) : (
+          <>
+            <CreditCard className="mr-2 h-5 w-5" />
+            Pay with x402 & Mint Proof
+          </>
+        )}
+      </Button>
+
+      {isProcessing && (
+        <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+          {Object.entries(paymentStepLabels).map(([step, label]) => (
+            <div
+              key={step}
+              className={step === currentStep ? "font-medium text-foreground" : ""}
+            >
+              {label}
+            </div>
+          ))}
+        </div>
       )}
-    </Button>
+    </div>
   );
 }

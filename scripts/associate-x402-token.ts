@@ -7,6 +7,7 @@ import {
   TokenId,
 } from "@hiero-ledger/sdk";
 import "dotenv/config";
+import { requireHederaTestnet } from "../src/lib/hedera/network";
 
 async function main() {
   const paymentAsset = process.env.X402_PAYMENT_ASSET || "USDC";
@@ -19,7 +20,7 @@ async function main() {
   const operatorPrivateKey = process.env.HEDERA_OPERATOR_PRIVATE_KEY;
   const payToAccountId = process.env.X402_PAY_TO_ACCOUNT_ID || operatorAccountId;
   const tokenId = process.env.X402_USDC_TOKEN_ID || "0.0.429274";
-  const network = process.env.HEDERA_NETWORK || "testnet";
+  requireHederaTestnet(process.env.HEDERA_NETWORK);
 
   if (!operatorAccountId || !operatorPrivateKey || !payToAccountId) {
     throw new Error("Missing HEDERA_OPERATOR_ACCOUNT_ID, HEDERA_OPERATOR_PRIVATE_KEY, or X402_PAY_TO_ACCOUNT_ID.");
@@ -31,7 +32,7 @@ async function main() {
     );
   }
 
-  const client = network === "mainnet" ? Client.forMainnet() : Client.forTestnet();
+  const client = Client.forTestnet();
   const privateKey = PrivateKey.fromStringECDSA(operatorPrivateKey);
   client.setOperator(AccountId.fromString(operatorAccountId), privateKey);
 
