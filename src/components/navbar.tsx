@@ -21,7 +21,7 @@ export function Navbar() {
         </div>
         <div className="flex min-w-0 flex-1 items-center justify-end gap-3">
           <a
-            href="https://github.com/proofmint-hedera/proofmint"
+            href="https://github.com/rubayet211/proof-mint"
             target="_blank"
             rel="noreferrer"
             className="hidden sm:flex"

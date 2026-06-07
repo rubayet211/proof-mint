@@ -5,11 +5,18 @@ export function getAccountUrl(accountId: string): string {
 }
 
 export function getTransactionUrl(transactionId: string): string {
-  // Hedera transaction IDs often use @ and .
-  // E.g., 0.0.123@162541.123123 -> HashScan expects 0.0.123-162541-123123
-  // But Hashscan also handles them if normalized. Let's return a safe encoded format.
-  const normalizedTxId = transactionId.replace(/@/, "-").replace(/\./g, "-");
+  const normalizedTxId = normalizeTransactionIdForHashScan(transactionId);
   return `${HASHSCAN_BASE_URL}/transaction/${normalizedTxId}`;
+}
+
+export function normalizeTransactionIdForHashScan(transactionId: string): string {
+  const trimmed = transactionId.trim();
+  const sdkTransactionId = trimmed.match(/^(\d+\.\d+\.\d+)@(\d+)\.(\d+)$/);
+  if (sdkTransactionId) {
+    return `${sdkTransactionId[1]}-${sdkTransactionId[2]}-${sdkTransactionId[3]}`;
+  }
+
+  return encodeURIComponent(trimmed);
 }
 
 export function getTokenUrl(tokenId: string): string {

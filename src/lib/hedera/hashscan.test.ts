@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { getAccountUrl, getTokenUrl, getTopicUrl, getTransactionUrl } from "./hashscan";
+import {
+  getAccountUrl,
+  getTokenUrl,
+  getTopicUrl,
+  getTransactionUrl,
+  normalizeTransactionIdForHashScan,
+} from "./hashscan";
 
 describe("HashScan URL helpers", () => {
   it("builds testnet account, token, and topic URLs", () => {
@@ -10,7 +16,14 @@ describe("HashScan URL helpers", () => {
 
   it("normalizes Hedera transaction IDs for HashScan", () => {
     expect(getTransactionUrl("0.0.12345@1710000000.123456789")).toBe(
-      "https://hashscan.io/testnet/transaction/0-0-12345-1710000000-123456789"
+      "https://hashscan.io/testnet/transaction/0.0.12345-1710000000-123456789"
     );
+  });
+
+  it("leaves mirror-node transaction IDs and consensus timestamps usable", () => {
+    expect(normalizeTransactionIdForHashScan("0.0.12345-1710000000-123456789")).toBe(
+      "0.0.12345-1710000000-123456789"
+    );
+    expect(normalizeTransactionIdForHashScan("1710000000.123456789")).toBe("1710000000.123456789");
   });
 });
