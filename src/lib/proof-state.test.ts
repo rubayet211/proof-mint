@@ -2,8 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
-import { createProofStateStore } from "./proof-state";
-import type { MintProofResponse, PaymentResult } from "@/types";
+import { createProofStateStore, createUpstashRedisBackend } from "./proof-state";
+import type { MintProofResponse, PaymentResult, ProofRecord } from "@/types";
 
 const tempDirs: string[] = [];
 
@@ -86,5 +86,60 @@ describe("proof state store", () => {
     const secondStore = createProofStateStore({ stateDir });
     await expect(secondStore.getRecoverableHcs(key, proofDigest)).resolves.toEqual(hcs);
     await expect(secondStore.markInProgress(key, proofDigest)).resolves.toBe(true);
+  });
+
+  it("persists the proof record so retry metadata matches the HCS payload", async () => {
+    const stateDir = await tempStateDir();
+    const key = "idemp_0.0.123_proof";
+    const proofDigest = "digest-proof";
+    const proof: ProofRecord = {
+      proofId: "proof_original",
+      title: "AI Hackathon ProofMint Demo",
+      category: "Work",
+      payerAccountId: "0.0.123",
+      recipientAccountId: "0.0.123",
+      issuerName: "ProofMint Agent",
+      createdAt: "2026-06-07T00:00:00.000Z",
+      paymentReference: "0.0.999@1780822008.510446976",
+      proofDigest,
+      app: "ProofMint Hedera",
+      network: "testnet",
+      schemaVersion: "1.0",
+    };
+
+    const firstStore = createProofStateStore({ stateDir });
+    await firstStore.markInProgress(key, proofDigest);
+    await firstStore.saveProofPrepared(key, proofDigest, proof);
+
+    const secondStore = createProofStateStore({ stateDir });
+    await expect(secondStore.getRecoverableProof(key, proofDigest)).resolves.toEqual(proof);
+  });
+
+  it("can use an Upstash Redis REST backend for shared hosted state", async () => {
+    const writes: string[] = [];
+    const fetcher = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      if (url.endsWith("/get/proofmint%3Atest")) {
+        return Response.json({ result: null });
+      }
+      if (url.endsWith("/set/proofmint%3Atest")) {
+        writes.push(String(init?.body));
+        return Response.json({ result: "OK" });
+      }
+      throw new Error(`Unexpected URL ${url}`);
+    };
+    const store = createProofStateStore({
+      backend: createUpstashRedisBackend({
+        url: "https://example.upstash.io",
+        token: "token",
+        key: "proofmint:test",
+        fetcher,
+      }),
+    });
+
+    await store.markInProgress("idemp", "digest");
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toContain("idemp");
   });
 });

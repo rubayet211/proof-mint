@@ -95,22 +95,24 @@ export async function POST(req: NextRequest) {
         await proofStateStore.savePaymentSettled(idempotencyKey, proofDigest, settledPayment);
       }
 
-      // 4. Payment verified! Prepare ProofRecord
-      const proof: ProofRecord = {
-        proofId: `proof_${crypto.randomUUID()}`,
-        title: data.title,
-        description: data.description,
-        category: data.category,
-        payerAccountId: data.payerAccountId,
-        recipientAccountId: data.recipientAccountId || data.payerAccountId,
-        issuerName: data.issuerName || "ProofMint Agent",
-        createdAt: new Date().toISOString(),
-        paymentReference: settledPayment.transactionId,
-        proofDigest,
-        app: "ProofMint Hedera",
-        network: "testnet",
-        schemaVersion: "1.0"
-      };
+      // 4. Payment verified! Prepare or recover the exact ProofRecord used for HCS.
+      const proof: ProofRecord = await proofStateStore.getRecoverableProof(idempotencyKey, proofDigest)
+        || {
+          proofId: `proof_${crypto.randomUUID()}`,
+          title: data.title,
+          description: data.description,
+          category: data.category,
+          payerAccountId: data.payerAccountId,
+          recipientAccountId: data.recipientAccountId || data.payerAccountId,
+          issuerName: data.issuerName || "ProofMint Agent",
+          createdAt: new Date().toISOString(),
+          paymentReference: settledPayment.transactionId,
+          proofDigest,
+          app: "ProofMint Hedera",
+          network: "testnet",
+          schemaVersion: "1.0"
+        };
+      await proofStateStore.saveProofPrepared(idempotencyKey, proofDigest, proof);
 
       // 5. Hedera Agent Kit Execution (HCS + HTS)
       // Since these are on-chain, they could fail. We'll do HCS first as primary.
