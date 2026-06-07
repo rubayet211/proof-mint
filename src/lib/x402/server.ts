@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { PaymentPayload, PaymentRequirements } from "@x402/core/types";
 import {
   PrivateKey,
+  createHederaPreflightTransfer,
   createHederaClient,
   createHederaSignAndSubmitTransaction,
   HEDERA_TESTNET_CAIP2,
@@ -48,7 +49,12 @@ export function buildPaymentRequirements(options: VerifyPaymentOptions): Payment
 export async function verifyOrRequestX402Payment(
   req: NextRequest,
   options: VerifyPaymentOptions
-): Promise<{ success: boolean; requiresPaymentResponse?: NextResponse; payment?: PaymentResult }> {
+): Promise<{
+  success: boolean;
+  requiresPaymentResponse?: NextResponse;
+  payment?: PaymentResult;
+  paymentError?: { error: string; message: string };
+}> {
   const requirements = buildPaymentRequirements(options);
   const paymentPayload = readPaymentPayload(req);
 
@@ -68,14 +74,26 @@ export async function verifyOrRequestX402Payment(
 
   if (!verify.isValid) {
     console.warn("x402 payment verification failed", verify.invalidReason, verify.invalidMessage);
-    return { success: false };
+    return {
+      success: false,
+      paymentError: {
+        error: "Payment Verification Failed",
+        message: formatPaymentFailureMessage(verify.invalidReason, verify.invalidMessage),
+      },
+    };
   }
 
   const settlement = await facilitator.settle(paymentPayload, requirements);
 
   if (!settlement.success) {
     console.warn("x402 payment settlement failed", settlement.errorReason, settlement.errorMessage);
-    return { success: false };
+    return {
+      success: false,
+      paymentError: {
+        error: "Payment Settlement Failed",
+        message: formatPaymentFailureMessage(settlement.errorReason, settlement.errorMessage),
+      },
+    };
   }
 
   return {
@@ -136,20 +154,38 @@ function createHederaFacilitator(): ExactHederaScheme {
   }
 
   const feePayerKey = PrivateKey.fromStringECDSA(privateKey);
-  const signAndSubmitTransaction = createHederaSignAndSubmitTransaction(
-    (network) => {
-      if (network !== HEDERA_TESTNET_CAIP2) {
-        throw new Error("ProofMint x402 facilitator is testnet-only.");
-      }
-      return createHederaClient(network);
-    },
-    feePayerKey
-  );
+  const buildFacilitatorClient = (network: string) => {
+    if (network !== HEDERA_TESTNET_CAIP2) {
+      throw new Error("ProofMint x402 facilitator is testnet-only.");
+    }
+    const client = createHederaClient(network);
+    client.setOperator(accountId, feePayerKey);
+    return client;
+  };
+  const signAndSubmitTransaction = createHederaSignAndSubmitTransaction(buildFacilitatorClient, feePayerKey);
+  const preflightTransfer = createHederaPreflightTransfer(buildFacilitatorClient);
 
   return new ExactHederaScheme({
     getAddresses: () => [accountId],
     signAndSubmitTransaction,
+    preflightTransfer,
   });
+}
+
+function formatPaymentFailureMessage(reason?: string, message?: string): string {
+  if (message?.includes("TOKEN_NOT_ASSOCIATED_TO_ACCOUNT") || message?.includes("pay_to_not_associated")) {
+    return `The configured payment token is not associated with the receiving account. ${message}`;
+  }
+
+  if (message) {
+    return message;
+  }
+
+  if (reason) {
+    return reason;
+  }
+
+  return "The provided x402 payment could not be verified.";
 }
 
 function encodeBase64Json(value: unknown): string {

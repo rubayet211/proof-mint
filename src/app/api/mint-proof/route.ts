@@ -64,7 +64,11 @@ export async function POST(req: NextRequest) {
       if (!paymentCheck.success || !paymentCheck.payment) {
         await clearInProgress(idempotencyKey);
         return NextResponse.json(
-          { success: false, error: "Payment Verification Failed", message: "The provided x402 payment could not be verified." },
+          {
+            success: false,
+            error: paymentCheck.paymentError?.error || "Payment Verification Failed",
+            message: paymentCheck.paymentError?.message || "The provided x402 payment could not be verified.",
+          },
           { status: 402 }
         );
       }

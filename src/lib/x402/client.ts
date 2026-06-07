@@ -55,7 +55,6 @@ async function createPartiallySignedTransferTransaction(
     transaction.addTokenTransfer(tokenId, payTo, amount);
   }
 
-  const populated = await signer.populateTransaction(transaction);
-  const signed = await signer.signTransaction(populated);
+  const signed = await signer.signTransaction(transaction);
   return transactionToBase64String(signed);
 }

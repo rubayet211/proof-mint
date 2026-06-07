@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "check": "pnpm lint && pnpm typecheck && pnpm build",
     "setup:hedera": "tsx scripts/setup-hedera.ts",
+    "setup:x402-token": "tsx scripts/associate-x402-token.ts",
     "test": "vitest run"
   },
   "dependencies": {
